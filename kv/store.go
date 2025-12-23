@@ -4,7 +4,6 @@ import (
 	"KV-Store/pkg/arena"
 	"KV-Store/pkg/wal"
 	"KV-Store/sstable"
-	sstable2 "KV-Store/sstable"
 	"errors"
 	"fmt"
 	"os"
@@ -35,7 +34,7 @@ func NewMemTable(size int, newWal *wal.WAL) *MemTable {
 type Store struct {
 	activeMap *MemTable
 	frozenMap *MemTable
-	ssTables  []*sstable2.Reader
+	ssTables  []*sstable.Reader
 	walDir    string
 	sstDir    string
 	walSeq    int64
@@ -254,7 +253,7 @@ func (s *Store) Get(key string) (string, bool) {
 	for _, file := range sstFiles {
 		// Open the reader
 		fullPath := filepath.Join(s.sstDir, file)
-		reader, err := sstable2.OpenSSTable(fullPath)
+		reader, err := sstable.OpenSSTable(fullPath)
 		if err != nil {
 			continue // Skip bad files
 		}
