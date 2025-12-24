@@ -3,6 +3,7 @@ package kv
 import (
 	"KV-Store/pkg/arena"
 	"KV-Store/pkg/wal"
+	pb "KV-Store/proto"
 	"KV-Store/raft"
 	"KV-Store/sstable"
 	"encoding/json"
@@ -32,13 +33,13 @@ type Store struct {
 	walSeq    int64
 	flushChan chan struct{} // FrozenMem -> Active Mem
 	// Raft Channels
-	raft        *raft.Raft
+	Raft        *raft.Raft
 	notifyChans map[int]chan OpResult // return client -> success
 	applyCh     chan raft.LogEntry    // applied cmds -> internal storage
 	mu          sync.RWMutex
 }
 
-func NewKVStore(peers []interface{}, me int) (*Store, error) {
+func NewKVStore(peers []pb.RaftServiceClient, me int) (*Store, error) {
 	walDir := filepath.Join("wal")
 	sstDir := filepath.Join("data")
 
@@ -83,7 +84,7 @@ func NewKVStore(peers []interface{}, me int) (*Store, error) {
 		store.activeMap.Index[k] = offset
 		store.activeMap.size += uint32(len(k) + len(v))
 	}
-	store.raft = raft.Make(peers, me, applyCh)
+	store.Raft = raft.Make(peers, me, applyCh)
 	go store.readAppliedLogs()
 	go store.FlushWorker()
 	return store, nil
@@ -92,17 +93,30 @@ func NewKVStore(peers []interface{}, me int) (*Store, error) {
 // Loop that pulls data from Raft and writes to Store
 func (s *Store) readAppliedLogs() {
 	for msg := range s.applyCh {
-		//deserialize
+		// Deserialize
 		var cmd raftCmd
-		_ = json.Unmarshal(msg.Command, &cmd)
-		s.mu.Lock()
+		if err := json.Unmarshal(msg.Command, &cmd); err != nil {
+			fmt.Printf("Error unmarshalling log: %v\n", err)
+			continue
+		}
+
+		var err error
 		if cmd.Op == CmdPut {
-			_ = s.applyInternal(cmd.Key, cmd.Value, false)
+			err = s.applyInternal(cmd.Key, cmd.Value, false)
 		} else if cmd.Op == CmdDelete {
-			_ = s.applyInternal(cmd.Key, "", true)
+			err = s.applyInternal(cmd.Key, "", true)
+		}
+
+		s.mu.Lock()
+		// We check if any client is waiting for this specific log index
+		if ch, ok := s.notifyChans[msg.Index]; ok {
+			ch <- OpResult{
+				Value: cmd.Value,
+				Err:   err,
+			}
+			delete(s.notifyChans, msg.Index)
 		}
 		s.mu.Unlock()
-
 	}
 }
 
@@ -147,7 +161,7 @@ func (s *Store) Put(key string, val string, isDelete bool) error {
 	cmd := raftCmd{Op: op, Key: key, Value: val}
 	cmdBytes, _ := json.Marshal(cmd)
 
-	index, _, isLeader := s.raft.Start(cmdBytes)
+	index, _, isLeader := s.Raft.Start(cmdBytes)
 	if !isLeader {
 		return fmt.Errorf("not leader")
 	}

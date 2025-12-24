@@ -40,7 +40,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.currentTerm
 
 	LastLogIndex := len(rf.log) - 1
-	if args.PrevLogIndex > LastLogIndex || rf.log[args.PrevLogIndex].term != args.PrevLogTerm {
+	if args.PrevLogIndex > LastLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
 		return
 	}
@@ -52,7 +52,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		index := insertIndex + i
 		// conflict detected
 		if index < len(rf.log) {
-			if rf.log[index].term != args.Term {
+			if rf.log[index].Term != args.Term {
 				rf.log = rf.log[:index]        // truncate the log upto match
 				rf.log = append(rf.log, entry) // append new entry
 				rf.persist()
@@ -107,7 +107,7 @@ func (rf *Raft) sendHeartBeats() {
 				Term:         term,
 				LeaderId:     rf.me,
 				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  rf.log[prevLogIndex].term,
+				PrevLogTerm:  rf.log[prevLogIndex].Term,
 				Entries:      entries,
 				LeaderCommit: rf.commitIndex,
 			}
@@ -139,7 +139,7 @@ func (rf *Raft) sendHeartBeats() {
 								count++
 							}
 						}
-						if count > len(rf.peers)/2 && rf.log[N].term == rf.currentTerm {
+						if count > len(rf.peers)/2 && rf.log[N].Term == rf.currentTerm {
 							rf.commitIndex = N
 							break // Found the highest committed index
 						}
@@ -159,8 +159,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	pbEntries := make([]*pb.LogEntry, len(args.Entries))
 	for i, v := range args.Entries {
 		pbEntries[i] = &pb.LogEntry{
-			Index:   int32(v.index),
-			Term:    int32(v.term),
+			Index:   int32(v.Index),
+			Term:    int32(v.Term),
 			Command: v.Command,
 		}
 	}

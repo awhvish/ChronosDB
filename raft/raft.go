@@ -18,8 +18,8 @@ const (
 )
 
 type LogEntry struct {
-	index   int
-	term    int
+	Index   int
+	Term    int
 	Command []byte
 }
 
@@ -90,8 +90,8 @@ func (rf *Raft) applier() {
 
 			msg := LogEntry{
 				Command: entry.Command,
-				index:   entry.index,
-				term:    entry.term,
+				Index:   entry.Index,
+				Term:    entry.Term,
 			}
 			rf.mu.Unlock()
 			// send to kv store
@@ -113,7 +113,7 @@ func Make(peers []pb.RaftServiceClient, me int, applyCh chan LogEntry) *Raft {
 	rf.votedFor = -1
 	rf.log = make([]LogEntry, 0)
 
-	rf.log = append(rf.log, LogEntry{term: 0})
+	rf.log = append(rf.log, LogEntry{Term: 0})
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
@@ -155,20 +155,19 @@ func (rf *Raft) startElection() {
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.lastResetTime = time.Now()
+	rf.persist() // Save the new term/vote immediately!
 
 	term := rf.currentTerm
 	lastLogIndex := len(rf.log) - 1
-	lastLogTerm := rf.log[lastLogIndex].term
+	lastLogTerm := rf.log[lastLogIndex].Term
 	rf.mu.Unlock()
 
-	votesReceived := 1 //self
+	votesReceived := 1 // Vote for self
 	votesRequired := len(rf.peers)/2 + 1
 
-	fmt.Printf("Node %d starting election timer for term %d", rf.me, term)
+	fmt.Printf("Node %d starting election for term %d\n", rf.me, term)
+
 	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
 		go func(peerIndex int) {
 			args := RequestVoteArgs{
 				Term:         term,
@@ -177,26 +176,31 @@ func (rf *Raft) startElection() {
 				LastLogIndex: lastLogIndex,
 			}
 			reply := RequestVoteReply{}
-			if rf.state != Candidate || rf.currentTerm != term {
-				return
-			}
-			// current term is outdated
-			if reply.Term > rf.currentTerm {
-				rf.currentTerm = reply.Term
-				rf.state = Follower
-				rf.votedFor = -1
-				return
-			}
+
 			if rf.sendRequestVote(peerIndex, &args, &reply) {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
+
+				// Discard old replies
+				if rf.state != Candidate || rf.currentTerm != term {
+					return
+				}
+
+				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term
+					rf.state = Follower
+					rf.votedFor = -1
+					rf.persist()
+					return
+				}
+
 				if reply.VoteGranted {
 					votesReceived++
-					if votesReceived >= votesRequired {
-						fmt.Printf("Node %d won election and will be leader for the term: %d", rf.me, reply.Term)
+					if votesReceived == votesRequired {
+						fmt.Printf("Node %d won election and will be leader for the term: %d\n", rf.me, reply.Term)
 						rf.state = Leader
 						for p := range rf.peers {
-							rf.nextIndex[p] = len(rf.log) // Optimistically assume they match
+							rf.nextIndex[p] = len(rf.log)
 							rf.matchIndex[p] = 0
 						}
 						go rf.sendHeartBeats()
@@ -204,7 +208,6 @@ func (rf *Raft) startElection() {
 				}
 			}
 		}(i)
-
 	}
 }
 

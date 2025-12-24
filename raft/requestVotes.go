@@ -31,8 +31,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = -1
 		rf.persist()
 	}
+	reply.Term = rf.currentTerm
 	lastLogIndex := len(rf.log) - 1
-	LastLogTerm := rf.log[lastLogIndex].term
+	LastLogTerm := rf.log[lastLogIndex].Term
 
 	logOk := false
 	//if log of candidate is greater or upto date with current node accept
@@ -45,8 +46,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && logOk {
 		rf.votedFor = args.CandidateId
 		rf.state = Follower
-		rf.lastResetTime = time.Now()
 		rf.persist()
+		rf.lastResetTime = time.Now()
 		reply.VoteGranted = true
 	} else {
 		reply.VoteGranted = false

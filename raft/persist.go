@@ -30,6 +30,9 @@ func (rf *Raft) readPersist() {
 
 	data, err := os.ReadFile(filename)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
 		fmt.Printf("raft readPersist err node %d: %s", rf.me, err)
 		return
 	}
