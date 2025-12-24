@@ -170,7 +170,7 @@ func (s *Store) Put(key string, val string, isDelete bool) error {
 	if s.notifyChans == nil {
 		s.notifyChans = make(map[int]chan OpResult)
 	}
-	ch := make(chan OpResult)
+	ch := make(chan OpResult, 1)
 	s.notifyChans[index] = ch
 	s.mu.Unlock()
 
