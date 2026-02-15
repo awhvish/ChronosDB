@@ -8,6 +8,20 @@ We welcome contributions of all kinds—whether you're fixing bugs, improving pe
 
 ## How Can You Contribute?
 
+---
+
+## 📂 Project Structure
+
+Navigating a new codebase can be daunting. Here is a quick map of where things live:
+
+* **`cmd/`** – The "Front Door." Contains the main entry points for the server and CLI.
+* **`internal/`** – The "Engine Room." Core logic that shouldn't be imported by other projects (Raft implementation, storage engine).
+* **`pkg/`** – "Shared Tools." Helper libraries that are safe for external use.
+* **`api/`** – The "Contract." Protobuf or interface definitions for node communication.
+* **`tests/`** – The "Safety Net." Integration and chaos tests.
+
+---
+
 ### Improve Write RPS
 
 Help us push the limits of write throughput:
