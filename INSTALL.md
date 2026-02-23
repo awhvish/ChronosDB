@@ -71,6 +71,11 @@ go run ./cmd/server/ \
   -peer-template "http://localhost:800%d"
 ```
 
+> **Note:** By default, HTTP request logging is disabled for better performance. To enable request logging (useful for debugging), add the `-log-requests` flag:
+> ```
+> go run ./cmd/server/ -id 0 -port 5001 -http 8000 -peers :5001,:5002,:5003 -peer-template "http://localhost:800%d" -log-requests
+> ```
+
 ### 3. Verify Connectivity
 
 Test a write to the Leader (usually Node 0 or 1):
