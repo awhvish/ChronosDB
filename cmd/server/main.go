@@ -49,7 +49,7 @@ func main() {
 	go startGRPCServer(*rpcPort, store)
 
 	// Register HTTP handlers
-	http.HandleFunc("/get", httpLogger(withMetrics(handleGet(store), "GET", "/get")))
+	http.HandleFunc("/get", httpLogger(withMetrics(handleGet(store, *id, *peerTemplate), "GET", "/get")))
 	http.HandleFunc("/put", httpLogger(withMetrics(handlePut(store, *id, *peerTemplate), "PUT", "/put")))
 	http.HandleFunc("/delete", httpLogger(withMetrics(handleDelete(store, *id, *peerTemplate), "DELETE", "/delete")))
 	http.Handle("/metrics", promhttp.Handler())
