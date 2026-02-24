@@ -23,6 +23,7 @@ func main() {
 	rpcPort := flag.String("port", "5001", "gRPC port")
 	httpPort := flag.String("http", "8001", "HTTP port")
 	peerTemplate := flag.String("peer-template", "http://kv-%d:8001", "Peer URL template")
+	logRequests := flag.Bool("log-requests", false, "Enable HTTP request logging")
 	flag.Parse()
 
 	// Initialize Raft clients
@@ -49,9 +50,9 @@ func main() {
 	go startGRPCServer(*rpcPort, store)
 
 	// Register HTTP handlers
-	http.HandleFunc("/get", httpLogger(withMetrics(handleGet(store, *id, *peerTemplate), "GET", "/get")))
-	http.HandleFunc("/put", httpLogger(withMetrics(handlePut(store, *id, *peerTemplate), "PUT", "/put")))
-	http.HandleFunc("/delete", httpLogger(withMetrics(handleDelete(store, *id, *peerTemplate), "DELETE", "/delete")))
+	http.HandleFunc("/get", httpLogger(withMetrics(handleGet(store), "GET", "/get"), *logRequests))
+	http.HandleFunc("/put", httpLogger(withMetrics(handlePut(store, *id, *peerTemplate), "PUT", "/put"), *logRequests))
+	http.HandleFunc("/delete", httpLogger(withMetrics(handleDelete(store, *id, *peerTemplate), "DELETE", "/delete"), *logRequests))
 	http.Handle("/metrics", promhttp.Handler())
 
 	fmt.Printf("HTTP server listening on :%s\n", *httpPort)

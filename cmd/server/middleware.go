@@ -20,7 +20,11 @@ func (ww *responseWriterWrapper) WriteHeader(code int) {
 }
 
 // httpLogger logs HTTP requests in the format: [HTTP] METHOD PATH STATUS_CODE STATUS_TEXT DURATION_MS
-func httpLogger(handler http.HandlerFunc) http.HandlerFunc {
+// When enableLogging is false, the handler is called directly without logging overhead
+func httpLogger(handler http.HandlerFunc, enableLogging bool) http.HandlerFunc {
+	if !enableLogging {
+		return handler
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ww := &responseWriterWrapper{ResponseWriter: w, statusCode: 200}
