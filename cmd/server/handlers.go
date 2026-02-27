@@ -7,9 +7,26 @@ import (
 	"KV-Store/kv"
 )
 
-func handleGet(store *kv.Store) http.HandlerFunc {
+func handleGet(store *kv.Store, nodeID int, peerTemplate string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.URL.Query().Get("key")
+		consistency := r.URL.Query().Get("consistency")
+
+		// If consistency=strong is requested, redirect to leader
+		if consistency == "strong" {
+			leaderID := store.Raft.GetLeader()
+			if leaderID == -1 {
+				http.Error(w, "Leader not found", http.StatusNotFound)
+				return
+			}
+			if leaderID != nodeID {
+				leaderURL := fmt.Sprintf(peerTemplate, leaderID)
+				targetURL := fmt.Sprintf("%s/get?key=%s&consistency=strong", leaderURL, key)
+				forwardToLeader(w, r, targetURL)
+				return
+			}
+		}
+
 		val, found := store.Get(key)
 		if !found {
 			http.Error(w, "Key not found", http.StatusNotFound)
