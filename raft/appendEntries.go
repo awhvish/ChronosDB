@@ -44,25 +44,37 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.currentTerm
 
 	// Log Consistency Check
-	lastLogIndex := len(rf.log) - 1
+	lastLogIndex := rf.getLastLogIndex()
 
 	// Case A: Follower log is shorter than Leader's PrevLogIndex
 	if args.PrevLogIndex > lastLogIndex {
 		reply.Success = false
 		reply.ConflictTerm = -1
-		reply.ConflictIndex = len(rf.log)
+		reply.ConflictIndex = rf.getLastLogIndex() + 1
 		return
 	}
 
 	// Case B: Term mismatch at PrevLogIndex
-	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	// Use getLogEntry to safely access the log, but remember PrevLogIndex might be in the snapshot.
+	// If PrevLogIndex < rf.lastIncludedIndex, we should theoretically have returned false,
+	// but let's handle the strict check:
+	if args.PrevLogIndex < rf.lastIncludedIndex {
 		reply.Success = false
-		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+		reply.ConflictIndex = rf.lastIncludedIndex + 1
+		reply.ConflictTerm = -1 // No term info for compacted logs (bcoz. we don't know the term for the snapshotted logs)
+		return
+	}
+
+	myTermAtPrevIndex := rf.getLogEntry(args.PrevLogIndex).Term
+	if myTermAtPrevIndex != args.PrevLogTerm {
+		reply.Success = false
+		reply.ConflictTerm = myTermAtPrevIndex
 
 		// Find the VERY FIRST index of this conflicting term (scan backwards)
 		// This allows jumping over an entire term of bad data
-		for i := args.PrevLogIndex; i >= 0; i-- {
-			if rf.log[i].Term == reply.ConflictTerm {
+		// We only scan down to LastIncludedIndex + 1, bcoz. we don't have anything before that available
+		for i := args.PrevLogIndex; i > rf.lastIncludedIndex; i-- {
+			if rf.getLogEntry(i).Term == reply.ConflictTerm {
 				reply.ConflictIndex = i
 			} else {
 				break
@@ -129,6 +141,13 @@ func (rf *Raft) sendHeartBeats() {
 			rf.mu.Lock()
 			if rf.state != Leader {
 				rf.mu.Unlock()
+				return
+			}
+
+			// Check if we need to send a snapshot
+			if rf.nextIndex[server] <= rf.lastIncludedIndex {
+				rf.mu.Unlock()
+				rf.sendInstallSnapshot(server)
 				return
 			}
 

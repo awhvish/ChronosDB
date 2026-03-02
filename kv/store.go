@@ -6,6 +6,8 @@ import (
 	pb "KV-Store/proto"
 	"KV-Store/raft"
 	"KV-Store/sstable"
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,10 +42,11 @@ type Store struct {
 	walSeq    int64
 	FlushChan chan struct{} // FrozenMem -> Active Mem
 	Me        int           // same as raft.me, for prometheus metrics
+
 	// Raft Channels
 	Raft         *raft.Raft
 	notifyChans  map[int]chan OpResult // return client -> success
-	applyCh      chan raft.LogEntry    // applied cmds -> internal storage
+	applyCh      chan raft.ApplyMsg    // applied cmds -> internal storage
 	mu           sync.RWMutex
 	compactionMu sync.Mutex
 	cond         *sync.Cond
@@ -64,7 +67,7 @@ func NewKVStore(peers []pb.RaftServiceClient, me int) (*Store, error) {
 
 	currentWal, _ := wal.OpenWAL(walDir, seqId)
 	entries, _ := currentWal.Recover()
-	applyCh := make(chan raft.LogEntry)
+	applyCh := make(chan raft.ApplyMsg)
 	store := &Store{
 		ActiveMap: NewMemTable(mapLimit, currentWal),
 		frozenMap: nil,
@@ -106,6 +109,15 @@ func NewKVStore(peers []pb.RaftServiceClient, me int) (*Store, error) {
 // Loop that pulls data from Raft and writes to Store
 func (s *Store) readAppliedLogs() {
 	for msg := range s.applyCh {
+		if msg.SnapshotValid {
+			s.restoreSnapshot(msg.Snapshot)
+			continue
+		}
+
+		if !msg.CommandValid {
+			continue
+		}
+
 		var cmd raftCmd
 		if err := json.Unmarshal(msg.Command, &cmd); err != nil {
 			continue
@@ -120,15 +132,44 @@ func (s *Store) readAppliedLogs() {
 
 		s.mu.Lock()
 		// We check if any client is waiting for this specific log index
-		if ch, ok := s.notifyChans[msg.Index]; ok {
+		if ch, ok := s.notifyChans[msg.CommandIndex]; ok {
 			ch <- OpResult{
 				Value: cmd.Value,
 				Err:   err,
 			}
-			delete(s.notifyChans, msg.Index)
+			delete(s.notifyChans, msg.CommandIndex)
 		}
 		s.mu.Unlock()
+
+		// Trigger snapshot if log grows too big
+		if msg.CommandIndex%1000 == 0 {
+			go s.takeSnapshot(msg.CommandIndex)
+		}
 	}
+}
+
+func (s *Store) takeSnapshot(index int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Capture state
+	// Currently only snapshot ActiveMap.
+	data := make(map[string]string)
+	for k, v := range s.ActiveMap.Index {
+		val, _, err := s.ActiveMap.Arena.Get(v) // Assuming Arena has Get(offset)
+		if err == nil {
+			data[k] = string(val)
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(data); err != nil {
+		fmt.Printf("Snapshot encode error: %v\n", err)
+		return
+	}
+
+	s.Raft.Snapshot(index, buf.Bytes())
 }
 
 // Put in storage
@@ -266,6 +307,75 @@ func (s *Store) Get(key string) (string, bool) {
 			return val, true
 		}
 	}
-
 	return "", false
+}
+
+// restoreSnapshot clears the current state and repopulates it from the snapshot
+func (s *Store) restoreSnapshot(snapshot []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var data map[string]string
+
+	buf := bytes.NewBuffer(snapshot)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&data); err != nil {
+		fmt.Printf("Error decoding snapshot: %v\n", err)
+		return
+	}
+
+	// Clear current state
+	s.ActiveMap = nil
+	s.frozenMap = nil
+	s.ssTables = nil 
+	s.walSeq = time.Now().UnixNano()
+
+	newWal, err := wal.OpenWAL(s.WalDir, s.walSeq)
+	if err != nil {
+		fmt.Printf("Error creating new WAL during restore: %v\n", err)
+		return
+	}
+
+	s.ActiveMap = NewMemTable(mapLimit, newWal)
+	s.frozenMap = nil
+	s.ssTables = nil 
+
+	// Populate ActiveMap
+	for k, v := range data {
+		offset, err := s.ActiveMap.Arena.Put(k, v, false)
+		if err != nil {
+			fmt.Printf("Error restoring key %s: %v\n", k, err)
+			continue
+		}
+		s.ActiveMap.Index[k] = offset
+		s.ActiveMap.Size += uint32(len(k) + len(v) + 7) // approx overhead
+
+		// Rotate if needed
+		if s.ActiveMap.Size > mapLimit {
+			// Rotate
+			s.rotateTableLocked()
+		}
+	}
+
+	fmt.Printf("Snapshot restored successfully. Keys: %d\n", len(data))
+}
+
+// Helper to rotate table while holding lock
+func (s *Store) rotateTableLocked() {
+	if s.frozenMap != nil {
+		// Stall
+		fmt.Println("Restore stall: waiting for flush")
+		return
+	}
+
+	s.frozenMap = s.ActiveMap
+	// Create new Active
+	s.walSeq++
+	newWal, _ := wal.OpenWAL(s.WalDir, s.walSeq)
+	s.ActiveMap = NewMemTable(mapLimit, newWal)
+
+	select {
+	case s.FlushChan <- struct{}{}:
+	default:
+	}
 }

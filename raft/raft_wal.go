@@ -188,6 +188,58 @@ func (w *WAL) PersistHardState(term, vote, commit uint32) error {
 	return nil
 }
 
+// TruncateWAL clears the existing WAL, starts a fresh one, and writes the current HardState.
+// This is used after a snapshot is created to discard old logs.
+func (w *WAL) TruncateWAL(lastIncludedIndex uint32, term, vote, commit uint32) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// 1. Close and cleanup old file
+	if err := w.writer.Flush(); err != nil {
+		fmt.Printf("Warning: error flushing before truncate: %v\n", err)
+	}
+	w.file.Close()
+
+	filename := w.file.Name()
+	if err := os.Remove(filename); err != nil {
+		return fmt.Errorf("failed to remove old WAL: %w", err)
+	}
+
+	// 2. Re-open fresh file
+	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return fmt.Errorf("failed to open new WAL: %w", err)
+	}
+	w.file = f
+	w.writer = bufio.NewWriterSize(f, 64*1024)
+	w.lastPersisted = lastIncludedIndex
+
+	// 3. Write HardState immediately
+	buf := walBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer walBufPool.Put(buf)
+
+	if err := buf.WriteByte(RecordTypeHardState); err != nil {
+		return err
+	}
+
+	headerScratch := make([]byte, 12)
+	binary.LittleEndian.PutUint32(headerScratch[0:4], term)
+	binary.LittleEndian.PutUint32(headerScratch[4:8], vote)
+	binary.LittleEndian.PutUint32(headerScratch[8:12], commit)
+	buf.Write(headerScratch)
+
+	if _, err := w.writer.Write(buf.Bytes()); err != nil {
+		return err
+	}
+
+	if err := w.writer.Flush(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // RecoverEntries Returns recovered entries, hard states, errors
 func (w *WAL) RecoverEntries() ([]WALEntry, HardState, error) {
 	w.mu.Lock()

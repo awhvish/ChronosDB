@@ -33,14 +33,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.persistState()
 	}
 	reply.Term = rf.currentTerm
-	lastLogIndex := len(rf.log) - 1
-	LastLogTerm := rf.log[lastLogIndex].Term
+
+	lastLogIndex := rf.getLastLogIndex()
+	lastLogTerm := rf.getLastLogTerm()
 
 	logOk := false
 	//if log of candidate is greater or upto date with current node accept
-	if args.LastLogTerm > LastLogTerm {
+	if args.LastLogTerm > lastLogTerm {
 		logOk = true
-	} else if args.LastLogTerm == LastLogTerm && args.LastLogIndex >= lastLogIndex {
+	} else if args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex {
 		logOk = true
 	}
 

@@ -7,6 +7,7 @@ option go_package = './proto';
 service RaftService {
   rpc RequestVote (RequestVoteRequest) returns (RequestVoteResponse);
   rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+  rpc InstallSnapshot (InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
 
 message RequestVoteRequest {
@@ -36,6 +37,20 @@ message AppendEntriesResponse {
   bool success = 2;
   int32 conflictIndex = 3;
   int32 conflictTerm = 4;
+}
+
+message InstallSnapshotRequest {
+  int32 term = 1;
+  int32 leaderId = 2;
+  int32 lastIncludedIndex = 3;
+  int32 lastIncludedTerm = 4;
+  int64 offset = 5;
+  bytes data = 6;
+  bool done = 7;
+}
+
+message InstallSnapshotResponse {
+  int32 term = 1;
 }
 
 message LogEntry {
